@@ -1,31 +1,41 @@
 import os
+import threading
 import time
 import urllib.parse
-import wave
+from queue import Queue
 
-import pyaudio
 import requests
+import soundcard as sc
+import soundfile as sf
 
 
-class Comments:
-    def __init__(self, base_url):
+class Comment:
+    def __init__(self, user_name: str, message: str) -> None:
+        self.user_name = user_name
+        self.message = message
+
+        self.reply = None
+        self.voice_file = None
+
+
+class GetComments:
+    def __init__(self, base_url: str) -> None:
         self.base_url = base_url
         self.api_url = urllib.parse.urljoin(base_url, "/api/comments")
         self.read_comments_length = 0
         self.last_time = 0
 
-    def get_comments(self):
-        current_time = time.time()
-        elapsed_time = current_time - self.last_time
-        if elapsed_time < 30:
-            time.sleep(30 - elapsed_time)
-        self.last_time = current_time
-
+    def get_comments(self) -> list[Comment]:
         res = requests.get(self.api_url)
-        comments = res.json()
+        comments_data = res.json()
+
+        comments = [
+            Comment(comment["data"]["name"], comment["data"]["comment"])
+            for comment in comments_data
+        ]
         return comments
 
-    def get_unread_comments(self):
+    def get_unread_comments(self) -> list[Comment]:
         comments = self.get_comments()
         unread_comments = comments[self.read_comments_length :]
         self.read_comments_length = len(comments)
@@ -43,20 +53,34 @@ temp_prompt = """以下の内容に従ってください。この内容は、会
 
 
 class GeminiPro:
-    def __init__(self, api_key, system_prompt=temp_prompt):
+    def __init__(self, api_key: str, system_prompt: str = temp_prompt) -> None:
         genai.configure(api_key=api_key)
 
-        self.model = genai.GenerativeModel("gemini-pro")
+        # モデルの設定
+        generation_config = {
+            "temperature": 0.9,  # 生成するテキストのランダム性を制御
+            "top_p": 1,  # 生成に使用するトークンの累積確率を制御
+            "top_k": 1,  # 生成に使用するトップkトークンを制御
+            "max_output_tokens": 512,  # 最大出力トークン数を指定`
+        }
+
+        self.model = genai.GenerativeModel(
+            "gemini-pro", generation_config=generation_config
+        )
 
         self.messages = [
             {"role": "user", "parts": [system_prompt]},
             {"role": "model", "parts": ["理解しました"]},
         ]
 
-    def generate_reply(self, comment):
-        self.messages.append({"role": "user", "parts": [comment]})
-        response = self.model.generate_content(self.messages)
-        reply = response.text
+    def generate_reply(self, message: str) -> str:
+        self.messages.append({"role": "user", "parts": [message]})
+        try:
+            response = self.model.generate_content(self.messages)
+            reply = response.text
+        except Exception as e:
+            print(e)
+            reply = "エラーが発生しました。もう一度お試しください。"
         self.messages.append({"role": "model", "parts": [reply]})
         return reply
 
@@ -65,7 +89,7 @@ temp_params = {}
 
 
 class StyleBertVITS:
-    def __init__(self, base_url, output_folder, params=temp_params):
+    def __init__(self, base_url:str, output_folder:str, params: dict = temp_params) -> None:
         self.base_url = base_url
         self.api_url = urllib.parse.urljoin(base_url, "/voice")
 
@@ -88,18 +112,17 @@ class StyleBertVITS:
         }
         self.params.update(params)
 
-    def generate_voice(self, text):
+    def generate_voice(self, text: str) -> bytes:
         params = self.params
         params["text"] = text
         res = requests.post(self.api_url, params=params)
         voice = res.content
         return voice
 
-    def save_voice(self, text):
+    def save_voice(self, text: str) -> str:
         voice = self.generate_voice(text)
 
-        # file_name = f"{int(time.time())}.wav"
-        file_name = "output.wav"
+        file_name = f"{int(time.time())}.wav"
         file_path = os.path.join(self.output_folder, file_name)
         with open(file_path, "wb") as f:
             f.write(voice)
@@ -108,86 +131,86 @@ class StyleBertVITS:
 
 
 class PlayAudio:
-    def __init__(self, speaker_id):
-        self.speaker_id = speaker_id
-        self.CHUNK = 1024
-        self.p = pyaudio.PyAudio()
+    def __init__(self, speaker_name: str) -> None:
+        self.speaker = sc.get_speaker(speaker_name)
 
-    def speak(self, voice_file):
-        wf = wave.open(voice_file, "rb")
+    def play(self, file_path: str) -> None:
+        try:
+            data, fs = sf.read(file_path)
+            self.speaker.play(data, samplerate=fs)
+        except Exception as e:
+            print(e)
 
-        stream = self.p.open(
-            format=self.p.get_format_from_width(wf.getsampwidth()),
-            channels=wf.getnchannels(),
-            rate=wf.getframerate(),
-            output=True,
-            output_device_index=self.speaker_id,
+
+class ChatVox:
+    def __init__(self) -> None:
+        self.exit_flag = False
+
+        self.thread_get_comments = threading.Thread(
+            target=self.get_comments, daemon=True
         )
+        self.comments_queue = Queue(6)
+        self.thread_generate_reply = threading.Thread(
+            target=self.generate_reply, daemon=True
+        )
+        self.reply_queue = Queue(3)
+        self.thread_play_audio = threading.Thread(target=self.play_audio, daemon=True)
 
-        data = wf.readframes(self.CHUNK)
+    def Run(self) -> None:
+        self.thread_get_comments.start()
+        self.thread_generate_reply.start()
+        self.thread_play_audio.start()
+        while not self.exit_flag:
+            time.sleep(1)
 
-        while data:
-            stream.write(data)
-            data = wf.readframes(self.CHUNK)
+    def get_comments(self) -> None:
+        while not self.exit_flag:
+            comments = get_comments.get_unread_comments()
+            for comment in comments:
+                self.comments_queue.put(comment)
+            time.sleep(15)
 
-        stream.stop_stream()
-        stream.close()
+    def generate_reply(self) -> None:
+        while not self.exit_flag:
+            if not self.comments_queue.empty():
+                comment = self.comments_queue.get()
+                reply = gemini_pro.generate_reply(comment.message)
 
-        self.p.terminate()
+                voice_file = style_bert_vits.save_voice(reply)
+                comment.reply = reply
+                comment.voice_file = voice_file
+                self.reply_queue.put(comment)
 
+                self.comments_queue.task_done()
 
-# メイン関数
-# async def main():
-def main():
-    # unread_comments = await get_unread_comments()
-    unread_comments = comments.get_unread_comments()
+    def play_audio(self) -> None:
+        while not self.exit_flag:
+            if not self.reply_queue.empty():
+                comment = self.reply_queue.get()
+                reply = comment.reply
+                voice_file = comment.voice_file
 
-    for comment in unread_comments:
-        user_name = comment["data"]["name"]
-        message = comment["data"]["comment"]
-        print(f"{user_name}: {message}")
+                print(f"{comment.user_name}: {comment.message}")
+                print(f"Bot: {reply}")
+                play_audio.play(voice_file)
 
-        bot_name = "Bot"
-        reply = gemini_pro.generate_reply(message)
-        print(f"{bot_name}: {reply}")
+                os.remove(voice_file)
+                time.sleep(3)
 
-        voice_file = style_bert_vits.save_voice(reply)
-        play_audio.speak(voice_file)
-
-        # await asyncio.sleep(10)
-        time.sleep(5)
+                self.reply_queue.task_done()
 
 
 if __name__ == "__main__":
     import configparser
 
     import google.generativeai as genai
-    import questionary
-    from questionary import Choice
 
     # config.iniファイルの読み込み
     config = configparser.ConfigParser()
     config.read("config.ini")
 
-    # ユーザーにスピーカーIDを選択させる
-    audio = pyaudio.PyAudio()
-    speaker_list = [
-        Choice(
-            title=audio.get_device_info_by_index(i)["name"],
-            value=audio.get_device_info_by_index(i)["index"],
-        )
-        for i in range(audio.get_device_count())
-        if audio.get_device_info_by_index(i)["maxOutputChannels"] > 0
-    ]
-
-    speaker_id = questionary.select("Choose speaker", choices=speaker_list).ask()
-
-    config["General"]["speaker_id"] = str(speaker_id)
-    with open("config.ini", "w") as f:
-        config.write(f)
-
     # Commentsクラスのインスタンス化
-    comments = Comments(config["onecomme"]["api_base_url"])
+    get_comments = GetComments(config["onecomme"]["api_base_url"])
 
     # GeminiProクラスのインスタンス化
     gemini_pro = GeminiPro(config["genai"]["api_key"])
@@ -196,12 +219,8 @@ if __name__ == "__main__":
     style_bert_vits = StyleBertVITS(config["stylebertvits"]["api_base_url"], "output")
 
     # PlayAudioクラスのインスタンス化
-    play_audio = PlayAudio(speaker_id)
+    play_audio = PlayAudio(config["General"]["speaker"])
 
-    while True:
-        main()
-
-    # loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(loop)
-    # loop.call_soon(main())
-    # loop.run_forever()
+    # ChatVoxクラスのインスタンス化
+    chat_vox = ChatVox()
+    chat_vox.Run()
