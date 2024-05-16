@@ -80,7 +80,7 @@ class GeminiPro:
             reply = response.text
         except Exception as e:
             print(e)
-            reply = "エラーが発生しました。もう一度お試しください。"
+            reply = "エラーが発生したよ。"
         self.messages.append({"role": "model", "parts": [reply]})
         return reply
 
