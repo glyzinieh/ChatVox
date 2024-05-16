@@ -4,6 +4,7 @@ import time
 import urllib.parse
 from queue import Queue
 
+import google.generativeai as genai
 import requests
 import soundcard as sc
 import soundfile as sf
@@ -89,11 +90,14 @@ temp_params = {}
 
 
 class StyleBertVITS:
-    def __init__(self, base_url:str, output_folder:str, params: dict = temp_params) -> None:
+    def __init__(
+        self, base_url: str, output_folder: str, params: dict = temp_params
+    ) -> None:
         self.base_url = base_url
         self.api_url = urllib.parse.urljoin(base_url, "/voice")
 
         self.output_folder = output_folder
+        os.makedirs(self.output_folder, exist_ok=True)
 
         self.params = {
             "model_id": 0,
@@ -143,7 +147,12 @@ class PlayAudio:
 
 
 class ChatVox:
-    def __init__(self) -> None:
+    def __init__(self, onecomme_api_base_url, genai_api_key, stylebertvits_api_base_url, speaker_name) -> None:
+        self._get_comments = GetComments(onecomme_api_base_url)
+        self._gemini_pro = GeminiPro(genai_api_key)
+        self._style_bert_vits = StyleBertVITS(stylebertvits_api_base_url, "output")
+        self._play_audio = PlayAudio(speaker_name)
+
         self.exit_flag = False
 
         self.thread_get_comments = threading.Thread(
@@ -165,7 +174,7 @@ class ChatVox:
 
     def get_comments(self) -> None:
         while not self.exit_flag:
-            comments = get_comments.get_unread_comments()
+            comments = self._get_comments.get_unread_comments()
             for comment in comments:
                 self.comments_queue.put(comment)
             time.sleep(15)
@@ -174,9 +183,9 @@ class ChatVox:
         while not self.exit_flag:
             if not self.comments_queue.empty():
                 comment = self.comments_queue.get()
-                reply = gemini_pro.generate_reply(comment.message)
+                reply = self._gemini_pro.generate_reply(comment.message)
 
-                voice_file = style_bert_vits.save_voice(reply)
+                voice_file = self._style_bert_vits.save_voice(reply)
                 comment.reply = reply
                 comment.voice_file = voice_file
                 self.reply_queue.put(comment)
@@ -192,7 +201,7 @@ class ChatVox:
 
                 print(f"{comment.user_name}: {comment.message}")
                 print(f"Bot: {reply}")
-                play_audio.play(voice_file)
+                self._play_audio.play(voice_file)
 
                 os.remove(voice_file)
                 time.sleep(3)
@@ -203,24 +212,15 @@ class ChatVox:
 if __name__ == "__main__":
     import configparser
 
-    import google.generativeai as genai
-
     # config.iniファイルの読み込み
     config = configparser.ConfigParser()
     config.read("config.ini")
 
-    # Commentsクラスのインスタンス化
-    get_comments = GetComments(config["onecomme"]["api_base_url"])
-
-    # GeminiProクラスのインスタンス化
-    gemini_pro = GeminiPro(config["genai"]["api_key"])
-
-    # StyleBertVITSクラスのインスタンス化
-    style_bert_vits = StyleBertVITS(config["stylebertvits"]["api_base_url"], "output")
-
-    # PlayAudioクラスのインスタンス化
-    play_audio = PlayAudio(config["General"]["speaker"])
-
     # ChatVoxクラスのインスタンス化
-    chat_vox = ChatVox()
+    chat_vox = ChatVox(
+        config["General"]["onecomme_api_base_url"],
+        config["General"]["genai_api_key"],
+        config["General"]["stylebertvits_api_base_url"],
+        config["General"]["speaker"],
+    )
     chat_vox.Run()
