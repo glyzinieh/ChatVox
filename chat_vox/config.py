@@ -3,30 +3,33 @@ import configparser
 import questionary
 import soundcard as sc
 
+# config.iniファイルの読み込み
+config = configparser.ConfigParser()
+config.read("config.ini")
 
-def set_speaker(speaker_name: str) -> None:
-    # config.iniファイルの読み込み
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-
-    config["General"]["speaker"] = speaker_name
-
+def write_config():
     with open("config.ini", "w") as configfile:
         config.write(configfile)
 
 
+def get_speakers_list():
+    return [speaker.name for speaker in sc.all_speakers()]
+
+
 def choose_speaker() -> None:
-    # ユーザーにスピーカーIDを選択させる
-    speaker_list = sc.all_speakers()
     default_speaker = sc.default_speaker()
+
+    choices = get_speakers_list()
 
     speaker_name = questionary.select(
         "Speaker?",
-        choices=[speaker.name for speaker in speaker_list],
+        choices=choices,
         default=default_speaker.name,
     ).ask()
 
-    set_speaker(speaker_name)
+    config["General"]["speaker"] = speaker_name
+    write_config()
+
 
 if __name__ == "__main__":
     choose_speaker()
