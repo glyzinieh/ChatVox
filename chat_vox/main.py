@@ -210,17 +210,16 @@ class ChatVox:
 
 
 if __name__ == "__main__":
-    import configparser
+    from config import Config
 
-    # config.iniファイルの読み込み
-    config = configparser.ConfigParser()
-    config.read("config.ini")
+    config = Config("config.ini")
+    config.read_config()
 
     # ChatVoxクラスのインスタンス化
     chat_vox = ChatVox(
-        config["General"]["onecomme_api_base_url"],
-        config["General"]["genai_api_key"],
-        config["General"]["stylebertvits_api_base_url"],
-        config["General"]["speaker"],
+        config.config["onecomme"]["api_base_url"],
+        config.config["genai"]["api_key"],
+        config.config["stylebertvits"]["api_base_url"],
+        config.config["General"]["speaker"],
     )
     chat_vox.Run()
