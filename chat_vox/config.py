@@ -11,10 +11,10 @@ class Config:
 
     def read_config(self):
         self.config.read(self.config_file)
-        is_setup = bool(self.config["General"]["is_setup"])
+        is_setup = str2bool(self.config["General"]["is_setup"])
         if not is_setup:
             self.config["General"] = {
-                "is_setup": "False",
+                "is_setup": "True",
                 "speaker": sc.default_speaker().name,
             }
             self.config["onecomme"] = {
@@ -71,6 +71,10 @@ class Config:
 
 def get_speakers_list():
     return [speaker.name for speaker in sc.all_speakers()]
+
+
+def str2bool(v):
+    return v.lower() in ("yes", "true", "t", "1")
 
 
 if __name__ == "__main__":
